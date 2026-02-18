@@ -68,6 +68,54 @@ _force_utf8_stdio()
 
 load_dotenv()
 
+# V39.5：极简健康端口（避免云端因“进程退出/无端口”反复 Backoff）
+_HEALTH_SERVER_STARTED = False
+
+
+def _start_minimal_health_server() -> None:
+    """在云端启动一个极简 HTTP 端口，保证服务存活可观测。"""
+    global _HEALTH_SERVER_STARTED
+    if _HEALTH_SERVER_STARTED:
+        return
+    # 不依赖 IS_CLOUD_ENV（该变量在后面才定义）
+    if not (os.getenv("ZEABUR") == "1" or os.path.exists("/tmp")):
+        return
+    if (os.getenv("DISABLE_HEALTH_SERVER") or "").strip() == "1":
+        return
+    try:
+        import threading
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        port = int((os.getenv("PORT") or "8080").strip() or "8080")
+
+        class _H(BaseHTTPRequestHandler):
+            def do_GET(self):  # type: ignore
+                try:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/plain; charset=utf-8")
+                    self.end_headers()
+                    self.wfile.write(b"ok")
+                except Exception:
+                    pass
+
+            def log_message(self, _format, *_args):  # type: ignore
+                # 静默：避免刷屏
+                return
+
+        def _serve() -> None:
+            try:
+                HTTPServer(("0.0.0.0", port), _H).serve_forever()
+            except Exception:
+                return
+
+        t = threading.Thread(target=_serve, daemon=True)
+        t.start()
+        _HEALTH_SERVER_STARTED = True
+        print(f"[健康] health server 已启动: 0.0.0.0:{port}")
+    except Exception:
+        return
+
+
 # === V8.8 风控异常 ===
 class RiskAlertException(Exception):
     """检测到违禁词流弹，触发物理拦截。"""
@@ -3501,10 +3549,11 @@ async def generate_blood_bullet(
                 log_root = Path(base_dir).resolve()
                 lp = (log_root / "length_truncations.log")
                 with open(lp, "a", encoding="utf-8") as f:
+                    head_preview = final_text[:60].replace("\n", " ")
                     f.write(
                         f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\t"
                         f"industry={industry}\tlen={len(final_text)}\tcut=80\t"
-                        f"head={final_text[:60].replace('\\n',' ')}\n"
+                        f"head={head_preview}\n"
                     )
             except Exception:
                 pass
@@ -4347,6 +4396,12 @@ def main_saas() -> None:
     print("\n" + "="*60)
     print("✓ [火控自检] 正在尝试连接 Telegram API...")
     print("="*60 + "\n")
+
+    # V39.5：云端存活端口（避免 CrashLoop 时无法观测）
+    try:
+        _start_minimal_health_server()
+    except Exception:
+        pass
     
     # V38.0：暴力降维——云端空仓不下载，强制 gradient 生存模式
     if IS_CLOUD_ENV:
@@ -4433,8 +4488,13 @@ def main_saas() -> None:
         token = EmergencyConfig.get("TELEGRAM_BOT_TOKEN") or EmergencyConfig.get("TELEGRAM_TOKEN")
         
         if not token:
-            print("🔴 [暴力提取失败] 本地备份也无法读取")
-            raise RuntimeError("TELEGRAM_TOKEN 缺失且无法从备份恢复")
+            print("🔴 [暴力提取失败] TELEGRAM_TOKEN 仍为空：进入生存模式（不退出进程）")
+            try:
+                _start_minimal_health_server()
+            except Exception:
+                pass
+            while True:
+                time.sleep(60)
         else:
             print("✓ [暴力提取成功] 已从本地备份装填 TELEGRAM_TOKEN")
     
@@ -4455,13 +4515,19 @@ def main_saas() -> None:
             print("🔴 [云端环境] 环境变量缺失，已尝试从 .env 自动装填")
             print(f"🔴 [缺失密钥] {', '.join(missing_keys)}")
             print("="*60 + "\n")
-            raise RuntimeError(f"云端环境缺少环境变量: {', '.join(missing_keys)}")
+            print("⚠️ [生存协议] 不退出进程：请在 Zeabur 环境变量补齐后重启部署")
     
     # V16.9：启动即清场——战区净空协议
     physical_cleanup_output_lib()
     
     if not _PTB_AVAILABLE:
-        raise RuntimeError("缺少 python-telegram-bot 依赖，请先 pip install -r requirements.txt")
+        print("🔴 [依赖缺失] python-telegram-bot 未安装：进入生存模式（不退出进程）")
+        try:
+            _start_minimal_health_server()
+        except Exception:
+            pass
+        while True:
+            time.sleep(60)
     # V15.2：点火前暴力自检（mp4=0 直接熔断停止）
     firecontrol_preflight_or_die()
 
@@ -4520,7 +4586,11 @@ def main_saas() -> None:
     
     # V40.0：绝杀模式——不重放旧指令，直接清空积压后监听
     print("\n[Listening...] 母机已进入监听模式，等待统帅指令\n")
-    application.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
+    try:
+        application.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
+    except Exception as e:
+        print(f"[监听异常] run_polling 异常（将重试，不退出进程）: {e}")
+        time.sleep(10)
 
 
 # === 入口点 ===
@@ -4540,4 +4610,13 @@ if __name__ == "__main__":
         else:
             asyncio.run(main())
     else:
-        main_saas()
+        # V39.5：生存第一——监听异常也不退出进程（避免云端 Backoff）
+        while True:
+            try:
+                main_saas()
+            except Exception as e:
+                try:
+                    print(f"[主循环] main_saas 异常（将重试）: {e}")
+                except Exception:
+                    pass
+                time.sleep(10)
