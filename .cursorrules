@@ -1,0 +1,31 @@
+本项目【逻辑主权锁死规则】（强制执行）
+
+适用范围：无论使用 Sonnet 4.5 还是 GPT-5.2（或任何模型），都必须遵守以下约束。
+
+1) 网络请求架构（强制）
+   - 必须使用 httpx 异步客户端：httpx.AsyncClient（严禁同步 requests）
+   - 所有外部 API 请求必须显式设置 timeout=120.0
+   - 必须使用连接池 limits（防 Provider Error/断联/连接爆表）
+
+2) 路径与文件系统（强制）
+   - 必须使用 pathlib.Path 管理路径（严禁字符串拼接路径）
+   - 所有输出目录必须先 mkdir(parents=True, exist_ok=True)
+
+3) 变量命名主权（强制）
+   - 严禁修改已有函数的变量命名规范与现有变量名（除非修复语法/运行错误）
+   - 允许新增变量，但不得重命名/替换既有关键变量（例如 content/clean_text/audio_path/video_path 等）
+
+4) Prompt 主权（强制）
+   - generate_blood_bullet 的 System Prompt 必须 100% 抽离到 prompts/ 目录（模板文件）
+   - 代码中只允许做模板渲染与变量注入（严禁硬编码大段 System Prompt 文本）
+
+5) Seed 主权（强制）
+   - 所有外部 API 请求必须注入纳秒级 seed：time.time_ns()
+   - 注入方式优先使用请求头：X-Seed-NS（避免破坏上游 API schema）
+   - seed 必须可追溯（日志/归档/文件名允许携带时间戳）
+
+6) 安全与稳定性（强制）
+   - 严禁引入不可见字符/符号切割等“规避审核”手段
+   - 必须保留去复读/去乱码/去幻觉清洗逻辑（sanitize_final_text + for_tts 纯净化）
+   - 修改后必须保持 0 Linter Errors（0 红点）
+

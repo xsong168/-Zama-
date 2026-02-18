@@ -1,0 +1,14 @@
+# Zeabur / Nixpacks 云端部署配置
+# 用途：自动安装 FFmpeg 和 Python 依赖
+
+[phases.setup]
+# 安装 FFmpeg（视频缝合核心依赖）
+cmds = ["apt-get update && apt-get install -y ffmpeg"]
+
+[phases.install]
+# 升级 pip 并安装 Python 依赖
+cmds = ["pip install --upgrade pip", "pip install -r requirements.txt"]
+
+[start]
+# 启动命令（SaaS 监听模式）
+cmd = "python bot.py"

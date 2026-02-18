@@ -1,0 +1,6 @@
+# V38.0：EMERGENCY SURVIVAL（云端降维：生存第一）
+# 终极精简，只保留最核心依赖，避免 Zeabur 安装超时炸膛
+python-telegram-bot>=20.0,<22.0
+httpx>=0.24.0
+edge-tts>=6.1.0
+python-dotenv>=1.0.0
