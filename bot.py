@@ -207,7 +207,20 @@ if IS_CLOUD_ENV:
             os.chmod(dir_path, 0o777)
         print("[路径自愈] 云端环境 /tmp 目录已全线通电")
     except Exception as e:
+        # V27.0：权限降维自愈 - 使用系统临时目录
         print(f"[路径自愈] 警告: {e}")
+        try:
+            import tempfile
+
+            temp_base = Path(tempfile.gettempdir())
+            for dir_name in ["assets", "output", "Final_Out", "Junshi_Staging", "Jiumo_Auto_Factory"]:
+                try:
+                    (temp_base / dir_name).mkdir(parents=True, exist_ok=True)
+                except Exception:
+                    pass
+            print(f"[降维自愈] 已切换到系统临时目录: {temp_base}")
+        except Exception as e2:
+            print(f"[严重警告] 降维自愈失败: {e2}")
 
 # === 视觉引信物理路径硬连接（本地环境专用） ===
 # V23.0：云端环境下禁用 D 盘逻辑，强制使用 /tmp
@@ -1094,33 +1107,36 @@ def ensure_mp3_44100(audio_path: Path) -> None:
         return
 
 
-def wav_to_mp3_ffmpeg(wav_path: Path, mp3_path: Path) -> None:
-    """将 wav 转为 mp3（并统一 44.1kHz）。"""
+def _generate_silent_mp3_ffmpeg(mp3_path: Path, *, seconds: float = 6.0) -> None:
+    """极简兜底：用 FFmpeg 生成静音 mp3（无额外 Python 依赖）。"""
     mp3_path.parent.mkdir(parents=True, exist_ok=True)
+    sec = max(1.0, float(seconds))
     cmd = [
         "ffmpeg",
         "-y",
+        "-nostdin",
+        "-f",
+        "lavfi",
         "-i",
-        wav_path.resolve().as_posix(),
-        "-ar",
-        "44100",
-        "-ac",
-        "1",
-        "-codec:a",
+        "anullsrc=r=44100:cl=mono",
+        "-t",
+        f"{sec:.3f}",
+        "-c:a",
         "libmp3lame",
         "-b:a",
-        "160k",
+        "128k",
         mp3_path.resolve().as_posix(),
     ]
     r = subprocess.run(cmd, capture_output=True, timeout=120, encoding="utf-8", errors="ignore")
-    if r.returncode != 0:
+    if r.returncode != 0 or not mp3_path.exists():
         tail = (r.stderr or "")[-600:]
-        raise RuntimeError(f"wav->mp3 失败: {tail}")
+        raise RuntimeError(f"静音 mp3 兜底失败: {tail}")
+    ensure_mp3_44100(mp3_path)
 
 
 async def tts_fallback_to_mp3(text: str, mp3_path: Path, *, industry: str = "") -> None:
     """
-    V13.9：副火控音频（edge-tts 优先，pyttsx3 兜底）。
+    V13.9：副火控音频（edge-tts 优先，静音 mp3 兜底）。
     静默产出 mp3，供后续视频缝合使用。
     """
     t = (text or "").strip()
@@ -1143,6 +1159,16 @@ async def tts_fallback_to_mp3(text: str, mp3_path: Path, *, industry: str = "") 
     except Exception:
         pass
 
+    # 2) 生存兜底：静音 mp3（避免因为 TTS 失败导致整条链路炸膛）
+    try:
+        # 粗略估算口播时长：每秒约 4 字，上限 12 秒
+        est = min(12.0, max(4.0, len(t) / 4.0))
+        _generate_silent_mp3_ffmpeg(mp3_path, seconds=est)
+        print(f"   [音频] 已降级为静音 mp3: {mp3_path.name}")
+        return
+    except Exception:
+        raise RuntimeError("fallback tts failed (edge-tts + silent mp3)")
+
 
 async def tts_edge_force_mp3(text: str, mp3_path: Path, *, voices: list[str]) -> None:
     """V14.2：强制 edge-tts（指定音色列表依次尝试）。"""
@@ -1163,35 +1189,6 @@ async def tts_edge_force_mp3(text: str, mp3_path: Path, *, voices: list[str]) ->
             last = e
             continue
     raise RuntimeError(f"edge-tts failed: {last}")
-
-    # 2) pyttsx3（本地离线，质量次但可保底）
-    def _pyttsx3_to_wav(_text: str, _wav: Path) -> None:
-        import pyttsx3  # type: ignore
-
-        engine = pyttsx3.init()
-        try:
-            try:
-                engine.setProperty("rate", int(os.getenv("PYTTSX3_RATE") or "170"))
-            except Exception:
-                pass
-            engine.save_to_file(_text, str(_wav))
-            engine.runAndWait()
-        finally:
-            try:
-                engine.stop()
-            except Exception:
-                pass
-
-    wav_path = mp3_path.with_suffix(".fallback.wav")
-    await asyncio.to_thread(_pyttsx3_to_wav, t, wav_path)
-    wav_to_mp3_ffmpeg(wav_path, mp3_path)
-    try:
-        if wav_path.exists():
-            wav_path.unlink()
-    except Exception:
-        pass
-    ensure_mp3_44100(mp3_path)
-    print(f"   [音频] 已降级为 pyttsx3: {mp3_path.name}")
 
 # === 行业痛点场景库（八大主权战区） ===
 INDUSTRY_PAIN_SCENES = {
@@ -4444,35 +4441,6 @@ def main_saas() -> None:
                     os.environ["DEFAULT_BG_IMAGE"] = str(bg_path)
         except Exception as e:
             print(f"[警告] 备用背景生成失败: {e}")
-    
-    # V27.0：云端权限降维自愈
-    if IS_CLOUD_ENV:
-        try:
-            # 创建核心临时目录并授权
-            critical_dirs = [
-                "/tmp/assets",
-                "/tmp/output",
-                "/tmp/Final_Out",
-                "/tmp/Junshi_Staging",
-                "/tmp/Jiumo_Auto_Factory"
-            ]
-            for dir_path in critical_dirs:
-                os.makedirs(dir_path, exist_ok=True)
-                os.chmod(dir_path, 0o777)
-            print("[云端授权] /tmp 目录已获得完整 Linux 主权")
-        except Exception as e:
-            # V27.0：降维自愈 - 使用 tempfile 库
-            print(f"[警告] /tmp 目录授权失败: {e}")
-            print("[降维自愈] 尝试使用系统临时目录...")
-            try:
-                import tempfile
-                temp_base = Path(tempfile.gettempdir())
-                for dir_name in ["assets", "output", "Final_Out", "Junshi_Staging", "Jiumo_Auto_Factory"]:
-                    temp_dir = temp_base / dir_name
-                    temp_dir.mkdir(parents=True, exist_ok=True)
-                print(f"[降维自愈] 已切换到系统临时目录: {temp_base}")
-            except Exception as e2:
-                print(f"[严重警告] 降维自愈失败: {e2}")
     
     # V27.0：环境变量代码级死锁
     token = _env("TELEGRAM_TOKEN") or _env("TELEGRAM_BOT_TOKEN")
