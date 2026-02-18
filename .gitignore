@@ -19,6 +19,7 @@ v3.mp3
 .env.*
 *.env
 !.env.example
+!.env.zeabur.example
 
 # === Docker 相关 ===
 .dockerignore
