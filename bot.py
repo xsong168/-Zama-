@@ -2600,6 +2600,23 @@ def video_stitcher(audio_path, output_path, visual_profile: dict | None = None):
     except Exception:
         pass
 
+    # V44.3：视频池为空降级保护——FORCE_ 路径无法实体化时强制渐变（禁止黑底）
+    try:
+        _bg_type_now = str(bg.get("type") or "").lower()
+        _bg_path_now = str(bg.get("path") or "")
+        if _bg_type_now == "video" and (
+            _bg_path_now.startswith("FORCE_") or not os.path.exists(_bg_path_now)
+        ):
+            _ind_grad = str(visual_profile.get("_industry") or ind0 or "").strip()
+            try:
+                _c1, _c2 = VisualEngine.make_industry_gradient(None, _ind_grad)
+            except Exception:
+                _c1, _c2 = "#0a0a0a", "#1a1a2e"
+            bg = {"type": "gradient", "from": _c1, "to": _c2}
+            print(f"[V44.3] 视频素材池为空，已切换至行业渐变背景: {_ind_grad} ({_c1}→{_c2})")
+    except Exception:
+        pass
+
     # 默认安全：抽象背景（规避门牌/车牌/品牌logo）
     if bg.get("type") == "color":
         color = bg.get("color") or "black"
@@ -3444,6 +3461,9 @@ async def generate_blood_bullet(
                     "role": "user",
                     "content": "\n".join([
                         f"目标行业：{industry}",
+                        # V44.3：顶级操盘手身份主权注入
+                        "你现在的身份是：一个顶级的短视频操盘手专家，专门为百万级账号策划爆款脚本。",
+                        "你的任务是策划一套能够突破百万播放量的爆款脚本，每个字都必须精准刺穿用户的认知防线。",
                         f"V10.0 风格引擎：{v10_style_prompt}（只按风格写，不要输出风格名称）",
                         f"V10.0 攻击角度：{v10_angle}（本篇只允许一个角度，禁止复刻上一次句式）",
                         f"深夜噩梦场景：{pain_scene}",
@@ -3480,7 +3500,13 @@ async def generate_blood_bullet(
                             "必须在①②③论证中引用其中至少 3 枚，并倒推每枚背后的商业定性。"
                             "若出现“赛博地主”，必须讨论“数字收租/数字收租模型”。"
                         ) if str(industry).strip() in ["自媒体", "做IP", "IP"] else "",
-                        "要求：狠、短、可拍、可上屏。每段开头必须先抛一个生肉关键词，再接一句场景。"
+                        # V44.3：核心爆款要求
+                        "核心要求：",
+                        "- 观点极端犀利，节奏连环刺激，剔除所有文学修饰废话。",
+                        "- 必须含：深度干货、情绪钩子、引起阶级共鸣的真实场景。",
+                        "- 结尾硬锁死：以一个让人停止刷屏的'金句'作为灵魂升华。",
+                        "要求：狠、短、可拍、可上屏。每段开头必须先抛一个生肉关键词，再接一句场景。",
+                        "严禁套话，禁止泛泛而谈，必须贴合实际行业痛点，让看到的人产生强烈的自我代入感。"
                     ]).strip()
                 }
             ]
@@ -4585,19 +4611,29 @@ def main_saas() -> None:
     # V40.0：物理核平 Webhook + 积压消息（启动前 URL 强扫）
     # - deleteWebhook(drop_pending_updates=true)：扫平历史积压 update
     # - run_polling(drop_pending_updates=true)：彻底丢弃旧指令，避免重启炸膛
+    # V44.2：使用 urllib（不触碰 asyncio）替代 httpx.get，
+    #        防止 anyio 关闭事件循环后 run_polling 拿到已关闭的 loop 炸膛
     print("\n[链路诊断] 正在物理核平 Webhook + 历史积压...")
     try:
-        r = httpx.get(
-            f"https://api.telegram.org/bot{token}/deleteWebhook",
-            params={"drop_pending_updates": "true"},
-            timeout=15.0,
+        import urllib.request as _urllib_req
+        import urllib.parse as _urllib_parse
+        _wh_url = (
+            f"https://api.telegram.org/bot{token}/deleteWebhook"
+            f"?{_urllib_parse.urlencode({'drop_pending_updates': 'true'})}"
         )
-        if r.status_code == 200:
-            print("✓ [链路诊断] Webhook + 历史积压已物理扫平")
-        else:
-            print(f"[链路诊断] Webhook 清除警告: HTTP {r.status_code}")
+        with _urllib_req.urlopen(_wh_url, timeout=15) as _r:
+            if _r.status == 200:
+                print("✓ [链路诊断] Webhook + 历史积压已物理扫平")
+            else:
+                print(f"[链路诊断] Webhook 清除警告: HTTP {_r.status}")
     except Exception as e:
         print(f"[链路诊断] Webhook 清除警告: {e}")
+
+    # V44.2：事件循环物理重置（防止任何同步 IO 提前关闭 loop）
+    try:
+        asyncio.set_event_loop(asyncio.new_event_loop())
+    except Exception:
+        pass
     
     application = Application.builder().token(token).build()
     application.add_handler(CommandHandler("start", start_callback))
