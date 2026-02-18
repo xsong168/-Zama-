@@ -4348,11 +4348,26 @@ async def start_callback(update: "Update", context: "ContextTypes.DEFAULT_TYPE")
         _ensure_saas_worker_started(context.application)
     except Exception:
         pass
-    await update.message.reply_text("【统帅部】雷达已在线。请直接发送行业关键词（如：白酒/餐饮/自媒体/IP）。")
+    try:
+        msg = update.effective_message
+        if msg:
+            await msg.reply_text(
+                "【统帅部】雷达已在线。\n"
+                "- 私聊：直接发送行业关键词（如：白酒/餐饮/自媒体/IP）\n"
+                "- 群聊/频道：若隐私模式拦截普通消息，请用命令：/fire 自媒体"
+            )
+    except Exception:
+        pass
 
 
-async def industry_callback(update: "Update", context: "ContextTypes.DEFAULT_TYPE") -> None:
-    if not update.message or not update.message.text:
+async def fire_callback(update: "Update", context: "ContextTypes.DEFAULT_TYPE") -> None:
+    """
+    V40.4：群聊/频道生存触发器
+    - 解决 Telegram 隐私模式导致普通文本不触发的问题
+    - 统一走队列，保证“发一次就有回执”
+    """
+    msg = update.effective_message
+    if not msg:
         return
 
     try:
@@ -4360,14 +4375,64 @@ async def industry_callback(update: "Update", context: "ContextTypes.DEFAULT_TYP
     except Exception:
         pass
 
-    chat_id = update.message.chat_id
-    industry = _detect_industry_trigger(update.message.text)
+    try:
+        chat_id = int(update.effective_chat.id) if update.effective_chat else int(msg.chat_id)
+    except Exception:
+        return
+
+    raw = ""
+    try:
+        raw = " ".join(getattr(context, "args", []) or [])
+    except Exception:
+        raw = ""
+    raw = raw.strip() or str(getattr(msg, "text", "") or "")
+
+    industry = _detect_industry_trigger(raw)
+    if not industry:
+        try:
+            await msg.reply_text("用法：/fire 自媒体（或白酒/餐饮/创业/美容/汽修/医美/教培/婚庆）")
+        except Exception:
+            pass
+        return
+
+    try:
+        await msg.reply_text(f"✓ 收到统帅指令：正在紧急调配【{industry}】行业弹药零件...")
+    except Exception:
+        pass
+
+    try:
+        pos = _SAAS_TASK_QUEUE.qsize() + 1
+        _SAAS_TASK_QUEUE.put_nowait((chat_id, industry))
+        if pos >= 2:
+            try:
+                await msg.reply_text(f"【排队】已加入队列，第 {pos} 位。")
+            except Exception:
+                pass
+    except Exception:
+        asyncio.create_task(_saas_pipeline_task(context.application, chat_id=chat_id, industry=industry))
+
+
+async def industry_callback(update: "Update", context: "ContextTypes.DEFAULT_TYPE") -> None:
+    msg = update.effective_message
+    if not msg or not getattr(msg, "text", None):
+        return
+
+    try:
+        _ensure_saas_worker_started(context.application)
+    except Exception:
+        pass
+
+    try:
+        chat_id = int(update.effective_chat.id) if update.effective_chat else int(msg.chat_id)
+    except Exception:
+        return
+    industry = _detect_industry_trigger(str(msg.text))
     if not industry:
         return
 
     # 心跳：先回执，验证监听不死锁
     try:
-        await update.message.reply_text(f"✓ 收到统帅指令：正在紧急调配【{industry}】行业弹药零件...")
+        await msg.reply_text(f"✓ 收到统帅指令：正在紧急调配【{industry}】行业弹药零件...")
     except Exception:
         pass
 
@@ -4377,7 +4442,10 @@ async def industry_callback(update: "Update", context: "ContextTypes.DEFAULT_TYP
         _SAAS_TASK_QUEUE.put_nowait((chat_id, industry))
         # 只做轻量反馈，避免刷屏
         if pos >= 2:
-            await update.message.reply_text(f"【排队】已加入队列，第 {pos} 位。")
+            try:
+                await msg.reply_text(f"【排队】已加入队列，第 {pos} 位。")
+            except Exception:
+                pass
     except Exception:
         # 兜底：直接后台触发（避免因为队列异常导致“脱靶”）
         asyncio.create_task(_saas_pipeline_task(context.application, chat_id=chat_id, industry=industry))
@@ -4405,6 +4473,10 @@ def main_saas() -> None:
         try:
             factory_root = Path("/tmp/Jiumo_Auto_Factory")
             selfmedia_dir = factory_root / "自媒体"
+            try:
+                selfmedia_dir.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                pass
             mp4_count = 0
             try:
                 if selfmedia_dir.exists():
@@ -4518,7 +4590,14 @@ def main_saas() -> None:
     
     application = Application.builder().token(token).build()
     application.add_handler(CommandHandler("start", start_callback))
+    application.add_handler(CommandHandler("fire", fire_callback))
+    # 普通消息（私聊/群聊）
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, industry_callback))
+    # 频道消息（channel_post）兜底
+    try:
+        application.add_handler(MessageHandler(filters.UpdateType.CHANNEL_POST & filters.TEXT & ~filters.COMMAND, industry_callback))
+    except Exception:
+        pass
     print("[统帅部] 工厂与雷达已物理并轨：bot.py SaaS 监听模式已启动")
     
     # V26.0：云端成功启动通知（自动发送到 Telegram）
