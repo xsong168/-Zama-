@@ -29,6 +29,12 @@ from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
 
+# V44.0：100 枚金句导弹词库（创始人主权 / 数字视觉霸权 / 实战逻辑清洗）
+try:
+    from bot_logic.lexicon import GOLDEN_SENTENCES_100
+except Exception:
+    GOLDEN_SENTENCES_100: list[str] = []
+
 # python-telegram-bot (v20+)：SaaS 监听引擎（可选入口；缺依赖则在 main_saas 中报错）
 try:
     from telegram import Update
@@ -634,8 +640,7 @@ def generate_flesh_bombs_v84(industry: str) -> list[str]:
         q = random.choice(qualities)
         # 统一句式：用于 Prompt 强制引用与 Telegram 消息⑤
         bombs.append(f"{f}里的{q}")
-    # V16.2：战术减重——返回空列表
-    return []
+    return bombs
 
 
 def sanitize_flesh_bombs_v84(bombs: list[str], *, limit: int = 10) -> list[str]:
@@ -651,8 +656,7 @@ def sanitize_flesh_bombs_v84(bombs: list[str], *, limit: int = 10) -> list[str]:
              .replace("圈套", "博弈结构")
         )
         out.append(s)
-    # V16.2：战术减重——返回空列表
-    return []
+    return out[:limit]
 
 
 _SYSTEM_PROMPT_TEMPLATE_CACHE: str | None = None
@@ -982,7 +986,7 @@ def inject_term_pauses(text: str, terms: list[str] | None = None) -> str:
         if not term:
             continue
         # 若术语后面 12 字符内没有 ... ...，则插入
-        t = re.sub(rf"({re.escape(term)})(?![^\\n]{{0,12}}\\.\\.\\.\\s*\\.\\.\\.)", r"\\1 ... ...", t)
+        t = re.sub(rf"({re.escape(term)})(?![^\n]{{0,12}}\.\.\.[\s]*\.\.\.)", r"\1 ... ...", t)
     return t
 
 
@@ -3514,7 +3518,14 @@ async def generate_blood_bullet(
         # 创业/餐饮专属CTA
         if industry in ["创业", "餐饮"]:
             cta_hooks.append("\n\n创业与餐饮的结构性误差如何拆解，我已经写成同步思维逻辑的步骤。照做即可。")
-        
+
+        # V44.0：100 枚金句导弹并轨 CTA 池（随机抽 1 枚注入收口）
+        if GOLDEN_SENTENCES_100:
+            try:
+                cta_hooks.append("\n\n" + random.choice(GOLDEN_SENTENCES_100))
+            except Exception:
+                pass
+
         final_text = sanitize_final_text(content + random.choice(cta_hooks), industry=industry)
 
         # V10.0：破甲弹后强制 ... ... 停顿（非线性节奏）
@@ -4056,7 +4067,7 @@ async def main():
         async with httpx.AsyncClient(timeout=120.0, limits=limits) as test_client:
             test_ok = await tg_notifier(
                 test_client, 'SYSTEM_TEST', '[生产线点火测试]', 'NULL',
-                True, None, False, 'SYSTEM', '系统测试 - 权限验证'
+                True, None, 'SYSTEM', '系统测试 - 权限验证', None
             )
             print(f"[测试] {'权限已验证' if test_ok else '权限测试失败 - 继续执行'}")
     else:
