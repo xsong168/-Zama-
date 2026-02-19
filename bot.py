@@ -3378,7 +3378,7 @@ async def generate_blood_bullet(
     af = f"{name}.mp3"
     vf = f"{name}.mp4"
     sf = f"{name}.txt"  # 文案文件
-    bf = f"{name}.bombs.txt"  # 炸弹清单（V8.4）
+    bf = f"{name}.bombs.log"  # 炸弹清单物理隐身（V44.6：改 .log 防止 *.txt 误抓）
     audio_path = audio_dir / af
     video_path = video_dir / vf
     script_path = script_dir / sf
@@ -4262,7 +4262,7 @@ def _pick_latest_parts(base_dir: Path, industry: str) -> dict[str, Path | None]:
         "mp3": newest(base["audio"], "*.mp3"),
         "jpg": newest(base["image"], "*.jpg"),
         "mp4": newest(base["video"], "*.mp4"),
-        "bombs": newest(base["text"], "*.bombs.txt"),
+        "bombs": newest(base["text"], "*.bombs.log"),
     }
 
 
